@@ -67,5 +67,26 @@ namespace HIS.APP.Controllers
         {
             return View();
         }
+
+        /// <summary>
+        /// ProductDetails
+        /// </summary>
+        /// <returns></returns>
+        public IActionResult ProductDetails()
+        {
+            var productDetails = _dbContext.ObservationLabResults.ToList();
+            return View(productDetails);
+        }
+
+        /// <summary>
+        /// OrderDetails
+        /// </summary>
+        /// <returns></returns>
+        public IActionResult OrderDetails()
+        {
+            var orderDetails = _dbContext.ObservationLabResults.ToList();
+            return View(orderDetails);
+        }
+
     }
 }
