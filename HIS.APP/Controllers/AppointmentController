@@ -1,0 +1,68 @@
+using Microsoft.AspNetCore.Mvc;
+using System;
+using System.Collections.Generic;
+
+namespace HIS.APP.Controllers
+{
+    [Route("api/[controller]")]
+    [ApiController]
+    public class AppointmentController : ControllerBase
+    {
+        private static List<Appointment> _appointments = new List<Appointment>();
+
+        [HttpGet]
+        public IActionResult GetAppointments()
+        {
+            return Ok(_appointments);
+        }
+
+        [HttpGet("{id}")]
+        public IActionResult GetAppointmentById(int id)
+        {
+            var appointment = _appointments.Find(a => a.Id == id);
+            if (appointment == null)
+                return NotFound("Appointment not found.");
+            return Ok(appointment);
+        }
+
+        [HttpPost]
+        public IActionResult CreateAppointment([FromBody] Appointment appointment)
+        {
+            appointment.Id = _appointments.Count + 1; // Assigning a basic ID
+            _appointments.Add(appointment);
+            return CreatedAtAction(nameof(GetAppointmentById), new { id = appointment.Id }, appointment);
+        }
+
+        [HttpPut("{id}")]
+        public IActionResult UpdateAppointment(int id, [FromBody] Appointment updatedAppointment)
+        {
+            var appointment = _appointments.Find(a => a.Id == id);
+            if (appointment == null)
+                return NotFound("Appointment not found.");
+
+            appointment.Date = updatedAppointment.Date;
+            appointment.PatientName = updatedAppointment.PatientName;
+            appointment.DoctorName = updatedAppointment.DoctorName;
+            return Ok(appointment);
+        }
+
+        [HttpDelete("{id}")]
+        public IActionResult DeleteAppointment(int id)
+        {
+            var appointment = _appointments.Find(a => a.Id == id);
+            if (appointment == null)
+                return NotFound("Appointment not found.");
+
+            _appointments.Remove(appointment);
+            return NoContent();
+        }
+    }
+
+    public class Appointment
+    {
+        public int Id { get; set; }
+        public string PatientName { get; set; }
+        public string DoctorName { get; set; }
+        public DateTime Date { get; set; }
+    }
+}
