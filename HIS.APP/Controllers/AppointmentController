@@ -1,6 +1,9 @@
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Logging;
 using System;
 using System.Collections.Generic;
+using System.Linq;
+using System.Threading.Tasks;
 
 namespace HIS.APP.Controllers
 {
@@ -8,54 +11,112 @@ namespace HIS.APP.Controllers
     [ApiController]
     public class AppointmentController : ControllerBase
     {
-        private static List<Appointment> _appointments = new List<Appointment>();
+        private readonly IAppointmentService _appointmentService;
+        private readonly ILogger<AppointmentController> _logger;
+
+        public AppointmentController(IAppointmentService appointmentService, ILogger<AppointmentController> logger)
+        {
+            _appointmentService = appointmentService;
+            _logger = logger;
+        }
 
         [HttpGet]
-        public IActionResult GetAppointments()
+        public async Task<IActionResult> GetAppointments([FromQuery] string? doctor = null, [FromQuery] int page = 1, [FromQuery] int pageSize = 10)
         {
-            return Ok(_appointments);
+            try
+            {
+                var appointments = await _appointmentService.GetAppointmentsAsync(doctor, page, pageSize);
+                return Ok(appointments);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error retrieving appointments.");
+                return StatusCode(500, "An error occurred while retrieving appointments.");
+            }
         }
 
         [HttpGet("{id}")]
-        public IActionResult GetAppointmentById(int id)
+        public async Task<IActionResult> GetAppointmentById(int id)
         {
-            var appointment = _appointments.Find(a => a.Id == id);
-            if (appointment == null)
-                return NotFound("Appointment not found.");
-            return Ok(appointment);
+            try
+            {
+                var appointment = await _appointmentService.GetAppointmentByIdAsync(id);
+                if (appointment == null)
+                    return NotFound("Appointment not found.");
+                return Ok(appointment);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, $"Error retrieving appointment with ID {id}.");
+                return StatusCode(500, "An error occurred while retrieving the appointment.");
+            }
         }
 
         [HttpPost]
-        public IActionResult CreateAppointment([FromBody] Appointment appointment)
+        public async Task<IActionResult> CreateAppointment([FromBody] Appointment appointment)
         {
-            appointment.Id = _appointments.Count + 1; // Assigning a basic ID
-            _appointments.Add(appointment);
-            return CreatedAtAction(nameof(GetAppointmentById), new { id = appointment.Id }, appointment);
+            if (!ModelState.IsValid)
+                return BadRequest(ModelState);
+
+            try
+            {
+                var newAppointment = await _appointmentService.CreateAppointmentAsync(appointment);
+                return CreatedAtAction(nameof(GetAppointmentById), new { id = newAppointment.Id }, newAppointment);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error creating appointment.");
+                return StatusCode(500, "An error occurred while creating the appointment.");
+            }
         }
 
         [HttpPut("{id}")]
-        public IActionResult UpdateAppointment(int id, [FromBody] Appointment updatedAppointment)
+        public async Task<IActionResult> UpdateAppointment(int id, [FromBody] Appointment updatedAppointment)
         {
-            var appointment = _appointments.Find(a => a.Id == id);
-            if (appointment == null)
-                return NotFound("Appointment not found.");
+            if (!ModelState.IsValid)
+                return BadRequest(ModelState);
 
-            appointment.Date = updatedAppointment.Date;
-            appointment.PatientName = updatedAppointment.PatientName;
-            appointment.DoctorName = updatedAppointment.DoctorName;
-            return Ok(appointment);
+            try
+            {
+                var result = await _appointmentService.UpdateAppointmentAsync(id, updatedAppointment);
+                if (result == null)
+                    return NotFound("Appointment not found.");
+                
+                return Ok(result);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, $"Error updating appointment with ID {id}.");
+                return StatusCode(500, "An error occurred while updating the appointment.");
+            }
         }
 
         [HttpDelete("{id}")]
-        public IActionResult DeleteAppointment(int id)
+        public async Task<IActionResult> DeleteAppointment(int id)
         {
-            var appointment = _appointments.Find(a => a.Id == id);
-            if (appointment == null)
-                return NotFound("Appointment not found.");
+            try
+            {
+                var deleted = await _appointmentService.DeleteAppointmentAsync(id);
+                if (!deleted)
+                    return NotFound("Appointment not found.");
 
-            _appointments.Remove(appointment);
-            return NoContent();
+                return NoContent();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, $"Error deleting appointment with ID {id}.");
+                return StatusCode(500, "An error occurred while deleting the appointment.");
+            }
         }
+    }
+
+    public interface IAppointmentService
+    {
+        Task<IEnumerable<Appointment>> GetAppointmentsAsync(string? doctor, int page, int pageSize);
+        Task<Appointment?> GetAppointmentByIdAsync(int id);
+        Task<Appointment> CreateAppointmentAsync(Appointment appointment);
+        Task<Appointment?> UpdateAppointmentAsync(int id, Appointment updatedAppointment);
+        Task<bool> DeleteAppointmentAsync(int id);
     }
 
     public class Appointment
