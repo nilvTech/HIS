@@ -1,0 +1,61 @@
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Logging;
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using HIS.APP.Data; // Ensure correct namespace for ApplicationDbContext
+using HIS.APP.Models; // Ensure correct namespace for models
+using Microsoft.EntityFrameworkCore;
+
+namespace HIS.APP.Controllers
+{
+    public class ReportController : Controller
+    {
+        private readonly ApplicationDbContext _dbContext;
+        private readonly ILogger<ReportController> _logger;
+
+        public ReportController(ApplicationDbContext dbContext, ILogger<ReportController> logger)
+        {
+            _dbContext = dbContext;
+            _logger = logger;
+        }
+
+        /// <summary>
+        /// Retrieves a list of reports.
+        /// </summary>
+        public IActionResult Index()
+        {
+            try
+            {
+                var reports = _dbContext.Reports.AsNoTracking().ToList();
+                return View(reports);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error retrieving reports.");
+                return StatusCode(500, "Internal Server Error");
+            }
+        }
+
+        /// <summary>
+        /// Retrieves a specific report by ID.
+        /// </summary>
+        public IActionResult Details(int id)
+        {
+            try
+            {
+                var report = _dbContext.Reports.AsNoTracking().FirstOrDefault(r => r.Id == id);
+                if (report == null)
+                {
+                    return NotFound();
+                }
+                return View(report);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, $"Error retrieving report with ID {id}.");
+                return StatusCode(500, "Internal Server Error");
+            }
+        }
+    }
+}
