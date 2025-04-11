@@ -2,7 +2,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
 using System;
 using System.Collections.Generic;
-using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace HIS.APP.Controllers
@@ -16,114 +16,144 @@ namespace HIS.APP.Controllers
 
         public AppointmentController(IAppointmentService appointmentService, ILogger<AppointmentController> logger)
         {
-            _appointmentService = appointmentService;
-            _logger = logger;
+            _appointmentService = appointmentService ?? throw new ArgumentNullException(nameof(appointmentService));
+            _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         }
 
         [HttpGet]
-        public async Task<IActionResult> GetAppointments([FromQuery] string? doctor = null, [FromQuery] int page = 1, [FromQuery] int pageSize = 10)
+        public async Task<ActionResult<IEnumerable<Appointment>>> GetAppointments(
+            [FromQuery] string? doctor = null, 
+            [FromQuery] int page = 1, 
+            [FromQuery] int pageSize = 10,
+            CancellationToken cancellationToken = default)
         {
+            if (page < 1 || pageSize < 1)
+                return BadRequest("Page and PageSize must be greater than zero.");
+
             try
             {
-                var appointments = await _appointmentService.GetAppointmentsAsync(doctor, page, pageSize);
-                return Ok(appointments);
+                var appointments = await _appointmentService.GetAppointmentsAsync(doctor, page, pageSize, cancellationToken);
+                var totalRecords = await _appointmentService.GetTotalAppointmentsAsync(doctor, cancellationToken);
+
+                var response = new
+                {
+                    Data = appointments,
+                    Pagination = new
+                    {
+                        Page = page,
+                        PageSize = pageSize,
+                        TotalRecords = totalRecords
+                    }
+                };
+
+                return Ok(response);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error retrieving appointments.");
-                return StatusCode(500, "An error occurred while retrieving appointments.");
+                _logger.LogError(ex, "Error retrieving appointments for Doctor: {Doctor}, Page: {Page}, PageSize: {PageSize}", doctor, page, pageSize);
+                return StatusCode(500, "An unexpected error occurred while retrieving appointments.");
             }
         }
 
-        [HttpGet("{id}")]
-        public async Task<IActionResult> GetAppointmentById(int id)
+        [HttpGet("{id:int}")]
+        public async Task<ActionResult<Appointment>> GetAppointmentById(int id, CancellationToken cancellationToken = default)
         {
             try
             {
-                var appointment = await _appointmentService.GetAppointmentByIdAsync(id);
+                var appointment = await _appointmentService.GetAppointmentByIdAsync(id, cancellationToken);
                 if (appointment == null)
-                    return NotFound("Appointment not found.");
+                {
+                    _logger.LogWarning("Appointment with ID {Id} not found.", id);
+                    return NotFound(new { Message = "Appointment not found." });
+                }
                 return Ok(appointment);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, $"Error retrieving appointment with ID {id}.");
-                return StatusCode(500, "An error occurred while retrieving the appointment.");
+                _logger.LogError(ex, "Error retrieving appointment with ID {Id}.", id);
+                return StatusCode(500, "An unexpected error occurred while retrieving the appointment.");
             }
         }
 
         [HttpPost]
-        public async Task<IActionResult> CreateAppointment([FromBody] Appointment appointment)
+        public async Task<ActionResult<Appointment>> CreateAppointment([FromBody] Appointment appointment, CancellationToken cancellationToken = default)
         {
             if (!ModelState.IsValid)
                 return BadRequest(ModelState);
 
             try
             {
-                var newAppointment = await _appointmentService.CreateAppointmentAsync(appointment);
+                var newAppointment = await _appointmentService.CreateAppointmentAsync(appointment, cancellationToken);
                 return CreatedAtAction(nameof(GetAppointmentById), new { id = newAppointment.Id }, newAppointment);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error creating appointment.");
-                return StatusCode(500, "An error occurred while creating the appointment.");
+                _logger.LogError(ex, "Error creating appointment for Patient: {Patient}, Doctor: {Doctor}.", appointment.PatientName, appointment.DoctorName);
+                return StatusCode(500, "An unexpected error occurred while creating the appointment.");
             }
         }
 
-        [HttpPut("{id}")]
-        public async Task<IActionResult> UpdateAppointment(int id, [FromBody] Appointment updatedAppointment)
+        [HttpPut("{id:int}")]
+        public async Task<IActionResult> UpdateAppointment(int id, [FromBody] Appointment updatedAppointment, CancellationToken cancellationToken = default)
         {
             if (!ModelState.IsValid)
                 return BadRequest(ModelState);
 
             try
             {
-                var result = await _appointmentService.UpdateAppointmentAsync(id, updatedAppointment);
+                var result = await _appointmentService.UpdateAppointmentAsync(id, updatedAppointment, cancellationToken);
                 if (result == null)
-                    return NotFound("Appointment not found.");
-                
+                {
+                    _logger.LogWarning("Attempted to update non-existent appointment with ID {Id}.", id);
+                    return NotFound(new { Message = "Appointment not found." });
+                }
+
                 return Ok(result);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, $"Error updating appointment with ID {id}.");
-                return StatusCode(500, "An error occurred while updating the appointment.");
+                _logger.LogError(ex, "Error updating appointment with ID {Id}.", id);
+                return StatusCode(500, "An unexpected error occurred while updating the appointment.");
             }
         }
 
-        [HttpDelete("{id}")]
-        public async Task<IActionResult> DeleteAppointment(int id)
+        [HttpDelete("{id:int}")]
+        public async Task<IActionResult> DeleteAppointment(int id, CancellationToken cancellationToken = default)
         {
             try
             {
-                var deleted = await _appointmentService.DeleteAppointmentAsync(id);
+                var deleted = await _appointmentService.DeleteAppointmentAsync(id, cancellationToken);
                 if (!deleted)
-                    return NotFound("Appointment not found.");
+                {
+                    _logger.LogWarning("Attempted to delete non-existent appointment with ID {Id}.", id);
+                    return NotFound(new { Message = "Appointment not found." });
+                }
 
                 return NoContent();
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, $"Error deleting appointment with ID {id}.");
-                return StatusCode(500, "An error occurred while deleting the appointment.");
+                _logger.LogError(ex, "Error deleting appointment with ID {Id}.", id);
+                return StatusCode(500, "An unexpected error occurred while deleting the appointment.");
             }
         }
     }
 
     public interface IAppointmentService
     {
-        Task<IEnumerable<Appointment>> GetAppointmentsAsync(string? doctor, int page, int pageSize);
-        Task<Appointment?> GetAppointmentByIdAsync(int id);
-        Task<Appointment> CreateAppointmentAsync(Appointment appointment);
-        Task<Appointment?> UpdateAppointmentAsync(int id, Appointment updatedAppointment);
-        Task<bool> DeleteAppointmentAsync(int id);
+        Task<IEnumerable<Appointment>> GetAppointmentsAsync(string? doctor, int page, int pageSize, CancellationToken cancellationToken);
+        Task<int> GetTotalAppointmentsAsync(string? doctor, CancellationToken cancellationToken);
+        Task<Appointment?> GetAppointmentByIdAsync(int id, CancellationToken cancellationToken);
+        Task<Appointment> CreateAppointmentAsync(Appointment appointment, CancellationToken cancellationToken);
+        Task<Appointment?> UpdateAppointmentAsync(int id, Appointment updatedAppointment, CancellationToken cancellationToken);
+        Task<bool> DeleteAppointmentAsync(int id, CancellationToken cancellationToken);
     }
 
     public class Appointment
     {
         public int Id { get; set; }
-        public string PatientName { get; set; }
-        public string DoctorName { get; set; }
+        public string PatientName { get; set; } = string.Empty;
+        public string DoctorName { get; set; } = string.Empty;
         public DateTime Date { get; set; }
     }
 }
