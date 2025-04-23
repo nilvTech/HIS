@@ -13,6 +13,7 @@ namespace HIS.APP.Controllers
     {
         private readonly IAppointmentService _appointmentService;
         private readonly ILogger<AppointmentController> _logger;
+        public string Status { get; set; } = "Scheduled"; // or "Cancelled"
 
         public AppointmentController(IAppointmentService appointmentService, ILogger<AppointmentController> logger)
         {
@@ -74,6 +75,64 @@ namespace HIS.APP.Controllers
                 return StatusCode(500, "An unexpected error occurred while retrieving the appointment.");
             }
         }
+
+[HttpGet("range")]
+public async Task<ActionResult<IEnumerable<Appointment>>> GetAppointmentsByDateRange(
+    [FromQuery] DateTime from,
+    [FromQuery] DateTime to,
+    CancellationToken cancellationToken = default)
+{
+    if (from > to)
+        return BadRequest("From date must be earlier than To date.");
+
+    try
+    {
+        var appointments = await _appointmentService.GetAppointmentsByDateRangeAsync(from, to, cancellationToken);
+        return Ok(appointments);
+    }
+    catch (Exception ex)
+    {
+        _logger.LogError(ex, "Error retrieving appointments from {From} to {To}", from, to);
+        return StatusCode(500, "An error occurred while fetching appointments by date range.");
+    }
+}
+[HttpGet("upcoming/{doctorName}")]
+public async Task<ActionResult<IEnumerable<Appointment>>> GetUpcomingAppointments(
+    string doctorName,
+    CancellationToken cancellationToken = default)
+{
+    try
+    {
+        var upcoming = await _appointmentService.GetUpcomingAppointmentsForDoctorAsync(doctorName, cancellationToken);
+        return Ok(upcoming);
+    }
+    catch (Exception ex)
+    {
+        _logger.LogError(ex, "Error retrieving upcoming appointments for Doctor: {DoctorName}", doctorName);
+        return StatusCode(500, "An error occurred while fetching upcoming appointments.");
+    }
+}
+[HttpPost("{id:int}/cancel")]
+public async Task<IActionResult> CancelAppointment(int id, CancellationToken cancellationToken = default)
+{
+    try
+    {
+        var cancelled = await _appointmentService.CancelAppointmentAsync(id, cancellationToken);
+        if (!cancelled)
+        {
+            _logger.LogWarning("Attempted to cancel non-existent appointment with ID {Id}.", id);
+            return NotFound(new { Message = "Appointment not found or already canceled." });
+        }
+
+        return Ok(new { Message = "Appointment canceled successfully." });
+    }
+    catch (Exception ex)
+    {
+        _logger.LogError(ex, "Error canceling appointment with ID {Id}.", id);
+        return StatusCode(500, "An error occurred while canceling the appointment.");
+    }
+}
+
 
         [HttpPost]
         public async Task<ActionResult<Appointment>> CreateAppointment([FromBody] Appointment appointment, CancellationToken cancellationToken = default)
