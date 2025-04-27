@@ -67,7 +67,7 @@ namespace HIS.APP.Controllers
         /// Adds a new patient demographic record.
         /// </summary>
         [HttpPost("patient-demographics")]
-        public async Task<IActionResult> CreatePatient([FromBody] PatientDemographic patient)
+        public async Task<IActionResult> CreatePatient([FromBody] PatientDemographics patient)
         {
             if (patient == null)
             {
