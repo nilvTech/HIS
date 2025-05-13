@@ -1,17 +1,16 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
 using System;
-using System.Collections.Generic;
-using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
-using HIS.APP.Data; // Ensure correct namespace for ApplicationDbContext
-using HIS.APP.Models; // Ensure correct namespace for models
+using HIS.APP.Data;
+using HIS.APP.Models;
 using Microsoft.EntityFrameworkCore;
 
 namespace HIS.APP.Controllers
 {
     [ApiController]
-    [Route("api/[controller]")]
+    [Route("api/[controller]/patient-demographics")]
     public class HISController : ControllerBase
     {
         private readonly ApplicationDbContext _dbContext;
@@ -19,59 +18,65 @@ namespace HIS.APP.Controllers
 
         public HISController(ApplicationDbContext dbContext, ILogger<HISController> logger)
         {
-            _dbContext = dbContext;
-            _logger = logger;
+            _dbContext = dbContext ?? throw new ArgumentNullException(nameof(dbContext));
+            _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         }
 
         /// <summary>
-        /// Retrieves all patient demographics asynchronously.
+        /// Retrieves all patient demographics.
         /// </summary>
-        [HttpGet("patient-demographics")]
-        public async Task<IActionResult> GetPatientDemographics()
+        [HttpGet]
+        public async Task<IActionResult> GetAllAsync(CancellationToken cancellationToken = default)
         {
             try
             {
-                var patientDemographics = await _dbContext.Patientdemographics.AsNoTracking().ToListAsync();
-                return Ok(patientDemographics);
+                var patients = await _dbContext.Patientdemographics
+                                               .AsNoTracking()
+                                               .ToListAsync(cancellationToken);
+                return Ok(patients);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error retrieving patient demographics.");
-                return StatusCode(500, "Internal server error");
+                _logger.LogError(ex, "Failed to retrieve patient demographics.");
+                return StatusCode(500, "An error occurred while retrieving data.");
             }
         }
 
         /// <summary>
-        /// Retrieves a single patient demographic by ID.
+        /// Retrieves a patient demographic by ID.
         /// </summary>
-        [HttpGet("patient-demographics/{id}")]
-        public async Task<IActionResult> GetPatientById(int id)
+        [HttpGet("{id:int}")]
+        public async Task<IActionResult> GetByIdAsync(int id, CancellationToken cancellationToken = default)
         {
             try
             {
-                var patient = await _dbContext.Patientdemographics.AsNoTracking().FirstOrDefaultAsync(p => p.Id == id);
+                var patient = await _dbContext.Patientdemographics
+                                              .AsNoTracking()
+                                              .FirstOrDefaultAsync(p => p.Id == id, cancellationToken);
+
                 if (patient == null)
                 {
-                    return NotFound($"Patient with ID {id} not found.");
+                    return NotFound($"Patient with ID {id} was not found.");
                 }
+
                 return Ok(patient);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, $"Error retrieving patient with ID {id}.");
-                return StatusCode(500, "Internal server error");
+                _logger.LogError(ex, "Failed to retrieve patient with ID {PatientId}.", id);
+                return StatusCode(500, "An error occurred while retrieving the patient.");
             }
         }
 
         /// <summary>
-        /// Adds a new patient demographic record.
+        /// Creates a new patient demographic record.
         /// </summary>
-        [HttpPost("patient-demographics")]
-        public async Task<IActionResult> CreatePatient([FromBody] PatientDemographics patient)
+        [HttpPost]
+        public async Task<IActionResult> CreateAsync([FromBody] PatientDemographics patient, CancellationToken cancellationToken = default)
         {
             if (patient == null)
             {
-                return BadRequest("Patient object is null");
+                return BadRequest("Patient data is required.");
             }
 
             if (!ModelState.IsValid)
@@ -81,14 +86,15 @@ namespace HIS.APP.Controllers
 
             try
             {
-                await _dbContext.Patientdemographics.AddAsync(patient);
-                await _dbContext.SaveChangesAsync();
-                return CreatedAtAction(nameof(GetPatientById), new { id = patient.Id }, patient);
+                await _dbContext.Patientdemographics.AddAsync(patient, cancellationToken);
+                await _dbContext.SaveChangesAsync(cancellationToken);
+
+                return CreatedAtAction(nameof(GetByIdAsync), new { id = patient.Id }, patient);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error creating new patient record.");
-                return StatusCode(500, "Internal server error");
+                _logger.LogError(ex, "Failed to create patient record.");
+                return StatusCode(500, "An error occurred while saving the patient.");
             }
         }
     }
