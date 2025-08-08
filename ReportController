@@ -1,61 +1,186 @@
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using System;
-using System.Collections.Generic;
 using System.Linq;
-using HIS.APP.Data; // Ensure correct namespace for ApplicationDbContext
-using HIS.APP.Models; // Ensure correct namespace for models
-using Microsoft.EntityFrameworkCore;
+using System.Threading;
+using System.Threading.Tasks;
+using HIS.APP.Data;
+using HIS.APP.Models;
 
 namespace HIS.APP.Controllers
 {
-    public class ReportController : Controller
+    [Route("[controller]")]
+    public sealed class ReportController : Controller
     {
         private readonly ApplicationDbContext _dbContext;
         private readonly ILogger<ReportController> _logger;
 
         public ReportController(ApplicationDbContext dbContext, ILogger<ReportController> logger)
         {
-            _dbContext = dbContext;
-            _logger = logger;
+            _dbContext = dbContext ?? throw new ArgumentNullException(nameof(dbContext));
+            _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         }
 
         /// <summary>
-        /// Retrieves a list of reports.
+        /// Paginated, sortable, filterable list of reports (read-only).
         /// </summary>
-        public IActionResult Index()
+        /// <param name="q">Search text (title/description contains)</param>
+        /// <param name="sortBy">Column: createdAt|title|status (default: createdAt)</param>
+        /// <param name="dir">asc|desc (default: desc)</param>
+        /// <param name="page">1-based page number (default: 1)</param>
+        /// <param name="pageSize">items per page (default: 20, max: 100)</param>
+        [HttpGet("")]
+        [ResponseCache(Duration = 60, VaryByQueryKeys = new[] { "q", "sortBy", "dir", "page", "pageSize" })]
+        public async Task<IActionResult> Index(
+            string? q,
+            string sortBy = "createdAt",
+            string dir = "desc",
+            int page = 1,
+            int pageSize = 20,
+            CancellationToken ct = default)
         {
+            page = Math.Max(1, page);
+            pageSize = Math.Clamp(pageSize, 1, 100);
+
+            using var _ = _logger.BeginScope(new
+            {
+                TraceId = HttpContext.TraceIdentifier,
+                Query = q,
+                SortBy = sortBy,
+                Dir = dir,
+                Page = page,
+                PageSize = pageSize
+            });
+
             try
             {
-                var reports = _dbContext.Reports.AsNoTracking().ToList();
-                return View(reports);
+                IQueryable<Report> query = _dbContext.Reports.AsNoTracking();
+
+                // Filter
+                if (!string.IsNullOrWhiteSpace(q))
+                {
+                    var term = q.Trim();
+                    query = query.Where(r =>
+                        r.Title.Contains(term) || (r.Description != null && r.Description.Contains(term)));
+                }
+
+                // Sort
+                query = (sortBy.ToLowerInvariant(), dir.ToLowerInvariant()) switch
+                {
+                    ("title", "asc")      => query.OrderBy(r => r.Title),
+                    ("title", _)          => query.OrderByDescending(r => r.Title),
+
+                    ("status", "asc")     => query.OrderBy(r => r.Status),
+                    ("status", _)         => query.OrderByDescending(r => r.Status),
+
+                    ("createdat", "asc")  => query.OrderBy(r => r.CreatedAt),
+                    _                     => query.OrderByDescending(r => r.CreatedAt) // default
+                };
+
+                // Count + Page
+                var total = await query.CountAsync(ct);
+                var items = await query
+                    .Skip((page - 1) * pageSize)
+                    .Take(pageSize)
+                    .Select(r => new ReportListItemVm
+                    {
+                        Id = r.Id,
+                        Title = r.Title,
+                        Status = r.Status,
+                        CreatedAt = r.CreatedAt
+                    })
+                    .ToListAsync(ct);
+
+                var result = new PagedResult<ReportListItemVm>(items, total, page, pageSize);
+                return View(result);
+            }
+            catch (OperationCanceledException)
+            {
+                _logger.LogWarning("Index was cancelled by the client.");
+                return StatusCode(499); // Client Closed Request (non-standard but informative)
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error retrieving reports.");
-                return StatusCode(500, "Internal Server Error");
+                // Let global exception handler render a friendly error page if you have one.
+                return StatusCode(500);
             }
         }
 
         /// <summary>
-        /// Retrieves a specific report by ID.
+        /// Retrieves a specific report by ID (read-only).
         /// </summary>
-        public IActionResult Details(int id)
+        [HttpGet("{id:int}")]
+        public async Task<IActionResult> Details(int id, CancellationToken ct)
         {
+            using var _ = _logger.BeginScope(new { TraceId = HttpContext.TraceIdentifier, ReportId = id });
+
             try
             {
-                var report = _dbContext.Reports.AsNoTracking().FirstOrDefault(r => r.Id == id);
-                if (report == null)
+                var vm = await _dbContext.Reports
+                    .AsNoTracking()
+                    //.Include(r => r.Items) // if you need related data, include selectively
+                    .Where(r => r.Id == id)
+                    .Select(r => new ReportDetailsVm
+                    {
+                        Id = r.Id,
+                        Title = r.Title,
+                        Description = r.Description,
+                        Status = r.Status,
+                        CreatedAt = r.CreatedAt,
+                        UpdatedAt = r.UpdatedAt
+                    })
+                    .FirstOrDefaultAsync(ct);
+
+                if (vm is null)
                 {
-                    return NotFound();
+                    _logger.LogInformation("Report {ReportId} not found.", id);
+                    return NotFound(); // Consider custom NotFound view
                 }
-                return View(report);
+
+                return View(vm);
+            }
+            catch (OperationCanceledException)
+            {
+                _logger.LogWarning("Details({ReportId}) was cancelled by the client.", id);
+                return StatusCode(499);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, $"Error retrieving report with ID {id}.");
-                return StatusCode(500, "Internal Server Error");
+                _logger.LogError(ex, "Error retrieving report with ID {ReportId}.", id);
+                return StatusCode(500);
             }
         }
+
+        #region View Models & Helpers
+
+        public sealed record ReportListItemVm
+        {
+            public int Id { get; init; }
+            public string Title { get; init; } = string.Empty;
+            public string Status { get; init; } = string.Empty;
+            public DateTime CreatedAt { get; init; }
+        }
+
+        public sealed record ReportDetailsVm
+        {
+            public int Id { get; init; }
+            public string Title { get; init; } = string.Empty;
+            public string? Description { get; init; }
+            public string Status { get; init; } = string.Empty;
+            public DateTime CreatedAt { get; init; }
+            public DateTime? UpdatedAt { get; init; }
+        }
+
+        public sealed record PagedResult<T>(IReadOnlyList<T> Items, int Total, int Page, int PageSize)
+        {
+            public int TotalPages => (int)Math.Ceiling((double)Total / PageSize);
+            public bool HasPrevious => Page > 1;
+            public bool HasNext => Page < TotalPages;
+        }
+
+        #endregion
     }
 }
+
